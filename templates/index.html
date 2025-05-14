@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Spotify Playlists</title>
+</head>
+<body>
+    <h1>Select a Playlist to Sort by BPM</h1>
+    <form method="get" action="">
+        <label>Min BPM: <input type="number" name="min_bpm" value="0" /></label>
+        <label>Max BPM: <input type="number" name="max_bpm" value="300" /></label>
+        <label>Order:
+            <select name="order">
+                <option value="asc">Ascending</option>
+                <option value="desc">Descending</option>
+            </select>
+        </label>
+        <input type="submit" value="Apply Filters" />
+    </form>
+    <ul>
+        {% for playlist in playlists %}
+            <li>
+                {{ playlist.name }} —
+                <a href="/sort/{{ playlist.id }}?min_bpm={{ request.args.get('min_bpm', 0) }}&max_bpm={{ request.args.get('max_bpm', 300) }}&order={{ request.args.get('order', 'asc') }}">Sort by BPM</a>
+            </li>
+        {% endfor %}
+    </ul>
+</body>
+</html>
