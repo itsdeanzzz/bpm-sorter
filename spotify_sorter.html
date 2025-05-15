@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spotify Playlist Sorter</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Roboto', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-6">
+    <div class="container max-w-2xl mx-auto bg-white shadow-md rounded-lg p-8">
+        <h1 class="text-2xl font-semibold text-gray-800 mb-6 text-center">Spotify Playlist Sorter</h1>
+
+        <div id="login-section" class="space-y-4">
+            <p class="text-gray-600">Please log in to Spotify to continue.</p>
+            <button id="login-button" class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+                Login with Spotify
+            </button>
+        </div>
+
+        <div id="playlist-section" class="hidden space-y-4">
+            <div class="mb-4">
+                <label for="playlist-dropdown" class="block text-gray-700 text-sm font-bold mb-2">Select Playlist:</label>
+                <select id="playlist-dropdown" class="shadow appearance-none border rounded w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                    <option value="" disabled selected>Loading playlists...</option>
+                </select>
+            </div>
+
+            <div class="flex space-x-4">
+                <button id="sort-button" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+                    Sort by BPM
+                </button>
+                <button id="clear-button" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+                    Clear Log
+                </button>
+            </div>
+
+            <div id="log" class="mt-6 p-4 border rounded-md bg-gray-50 text-gray-700 overflow-y-auto max-h-64">
+                <p class="text-sm">Log:</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Client ID from Spotify Developer Dashboard
+        const CLIENT_ID = '17aae4140a024ecb83f4ff9f026ef5fe'; // Replace with your client ID
+        //  REDIRECT_URI should be your GitHub Pages URL (e.g., https://yourusername.github.io/your-repo-name/)
+        const REDIRECT_URI = 'https://github.com/itsdeanzzz/bpm-sorter/';
+        const SCOPES = [
+            'playlist-read-private',
+            'playlist-read-collaborative',
+            'playlist-modify-private',
+            'playlist-modify-public'
+        ]; // Define the scopes
+
+        const LOG_ELEMENT = document.getElementById('log');
+
+        let accessToken = null;
+        let playlists = [];
+
+        /**
+         * Logs messages to the UI.
+         * @param {string} message - The message to log.
+         */
+        function logMessage(message) {
+            const p = document.createElement('p');
+            p.textContent = message;
+            LOG_ELEMENT.appendChild(p);
+            LOG_ELEMENT.scrollTop = LOG_ELEMENT.scrollHeight; // Auto-scroll to bottom
+        }
+
+        /**
+         * Initiates the Spotify login flow.
+         */
+        function login() {
+            // Construct the authorization URL with scopes and encoded redirect URI
+            const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${SCOPES.join('%20')}`;
+            console.log('Login URL:', authUrl);
+            window.location.href = authUrl;
+        }
+
+        /**
+         * Extracts the access token from the URL hash after a successful login.
+         * This function is called when the page loads, to check if we've just been redirected back from Spotify.
+         *
+         * Important:  This version ASSUMES the script is running from the root of your GitHub Pages repository.
+         */
+        function getAccessTokenFromUrl() {
+            const hash = window.location.hash;
+            if (hash) {
+                const params = hash.substring(1).split('&').reduce((initial, item) => {
+                    if (item) {
+                        const parts = item.split('=');
+                        if (parts[0]) {
+                            initial[parts[0]] = decodeURIComponent(parts[1]);
+                        }
+                    }
+                    return initial;
+                }, {});
+
+                if (params.access_token) {
+                    accessToken = params.access_token;
+                    logMessage('Access token retrieved.');
+                    // IMPORTANT:  Now that we have the access token, we can initialize the rest of the app.
+                    initializeApp(); // Call a function to set up the UI and fetch data.
+                    return true;
+                } else if (params.error) {
+                    logMessage(`Error during authentication: ${params.error}`);
+                    return false;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Initializes the app after the access token is obtained.
+         * This function should be called after a successful login.
+         */
+        function initializeApp() {
+            document.getElementById('login-section').classList.add('hidden');
+            document.getElementById('playlist-section').classList.remove('hidden');
+            fetchPlaylists()
+                .then(populatePlaylistDropdown)
+                .catch(error => {
+                    logMessage(`Error: ${error.message}`);
+                    // Consider redirecting to login if fetching playlists fails
+                    document.getElementById('login-section').classList.remove('hidden');
+                    document.getElementById('playlist-section').classList.add('hidden');
+                });
+        }
+
+
+        /**
+        * Fetches the user's playlists from the Spotify API.
+        * @returns {Promise<Array>} - A promise that resolves with an array of playlist objects.
+        */
+        async function fetchPlaylists() {
+            if (!accessToken) {
+                throw new Error('Access token not available.');
+            }
+
+            const url = 'https://api.spotify.com/v1/me/playlists';
+            const headers = {
+                Authorization: `Bearer ${accessToken}`,
+            };
+            console.log('Fetching playlists from:', url);
+
+            try {
+                const response = await fetch(url, { headers });
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Failed to fetch playlists: ${response.status} ${response.statusText} - ${errorText}`);
+                }
+                const data = await response.json();
+                return data.items;
+            } catch (error) {
+                logMessage(`Error fetching playlists: ${error.message}`);
+                throw error; // Re-throw to be caught by caller
+            }
+        }
+
+        /**
+         * Populates the playlist dropdown with the user's playlists.
+         * @param {Array} playlists - An array of playlist objects.
+         */
+        function populatePlaylistDropdown(playlists) {
+            const dropdown = document.getElementById('playlist-dropdown');
+            dropdown.innerHTML = ''; // Clear existing options
+
+            if (playlists.length === 0) {
+                dropdown.add(new Option('No playlists found', ''));
+                dropdown.disabled = true;
+                return;
+            }
+
+            playlists.forEach((playlist) => {
+                const option = new Option(playlist.name, playlist.id);
+                dropdown.add(option);
+            });
+            dropdown.disabled = false;
+        }
+
+        /**
+         * Fetches the tracks for a given playlist from the Spotify API.  Handles pagination.
+         * @param {string} playlistId - The ID of the playlist.
+         * @returns {Promise<Array>} - A promise that resolves with an array of track objects.
+         */
+        async function fetchPlaylistTracks(playlistId) {
+          if (!accessToken) {
+            throw new Error('Access token not available.');
+          }
+
+          let allTracks = [];
+          let nextUrl = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`;
+           console.log('Fetching tracks from:', nextUrl);
+
+          try {
+            while (nextUrl) {
+                const response = await fetch(nextUrl, {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                    },
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Failed to fetch tracks: ${response.status} ${response.statusText} - ${errorText}`);
+                }
+
+                const data = await response.json();
+                allTracks = allTracks.concat(data.items);  // Combine fetched tracks
+                nextUrl = data.next; // Get the next URL for pagination
+            }
+            return allTracks;
+          } catch (error) {
+            logMessage(`Error fetching playlist tracks: ${error.message}`);
+            throw error;
+          }
+        }
+
+        /**
+         * Extracts the track IDs from an array of track objects.
+         * @param {Array} tracks - An array of track objects.
+         * @returns {Array} - An array of track IDs.
+         */
+        function getTrackIds(tracks) {
+            return tracks.map(track => track.track.id);
+        }
+
+        /**
+         * Fetches the audio features for a list of tracks from the Spotify API.
+         * @param {Array} trackIds - An array of track IDs.
+         * @returns {Promise<Array>} - A promise that resolves with an array of audio features objects.
+         */
+        async function fetchAudioFeatures(trackIds) {
+            if (!accessToken) {
+                throw new Error('Access token not available.');
+            }
+
+            const url = `https://api.spotify.com/v1/audio-features?ids=${trackIds.join(',')}`;
+            console.log('Fetching audio features from:', url);
+            const headers = {
+                Authorization: `Bearer ${accessToken}`,
+            };
+
+            try {
+                const response = await fetch(url, { headers });
+                if (!response.ok) {
+                  const errorText = await response.text();
+                  throw new Error(`Failed to fetch audio features: ${response.status} ${response.statusText} - ${errorText}`);
+                }
+                const data = await response.json();
+                return data.audio_features;
+            } catch (error) {
+                logMessage(`Error fetching audio features: ${error.message}`);
+                throw error;
+            }
+        }
+
+        /**
+         * Sorts an array of tracks by BPM.
+         * @param {Array} tracks - An array of track objects.
+         * @param {Array} audioFeatures - An array of audio features objects.
+         * @returns {Array} - A new array of tracks sorted by BPM.
+         */
+        function sortByBPM(tracks, audioFeatures) {
+            const tracksWithBPM = tracks.map(track => {
+                const feature = audioFeatures.find(f => f.id === track.track.id);
+                return {
+                    ...track,
+                    bpm: feature ? feature.tempo : null,
+                };
+            });
+
+            const sortedTracks = tracksWithBPM.sort((a, b) => {
+                if (a.bpm === null) return 1; // Put tracks without BPM at the end
+                if (b.bpm === null) return -1;
+                return a.bpm - b.bpm;
+            });
+            return sortedTracks;
+        }
+
+        /**
+         * Reorders the tracks in a playlist on Spotify.
+         * @param {string} playlistId - The ID of the playlist.
+         * @param {Array} trackIds - An array of track IDs in the new order.
+         * @returns {Promise<void>}
+         */
+        async function reorderPlaylist(playlistId, trackIds) {
+            if (!accessToken) {
+                throw new Error('Access token not available.');
+            }
+
+            const url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks`;
+            console.log('Reordering playlist with:', url);
+            const headers = {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+            };
+
+            const requestBody = {
+                uris: trackIds.map(id => `spotify:track:${id}`),
+            };
+
+            try {
+                const response = await fetch(url, {
+                    method: 'PUT', // Use PUT to replace the entire playlist
+                    headers,
+                    body: JSON.stringify(requestBody),
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Failed to reorder playlist: ${response.status} ${response.statusText} - ${errorText}`);
+                }
+                logMessage('Playlist reordered successfully.');
+            } catch (error) {
+                logMessage(`Error reordering playlist: ${error.message}`);
+                throw error;
+            }
+        }
+
+        /**
+         * Main function to orchestrate the process of fetching tracks, getting BPMs,
+         * sorting, and reordering the playlist.
+         */
+        async function sortPlaylist() {
+            const playlistId = document.getElementById('playlist-dropdown').value;
+            if (!playlistId) {
+                logMessage('Please select a playlist.');
+                return;
+            }
+
+            logMessage(`Sorting playlist: ${playlistId}...`);
+
+            try {
+                const tracks = await fetchPlaylistTracks(playlistId);
+                logMessage(`Fetched ${tracks.length} tracks.`);
+                const trackIds = getTrackIds(tracks);
+                const audioFeatures = await fetchAudioFeatures(trackIds);
+                logMessage(`Fetched audio features for ${audioFeatures.length} tracks.`);
+                const sortedTracks = sortByBPM(tracks, audioFeatures);
+                const sortedTrackIds = sortedTracks.map(track => track.track.id);
+
+                // Check if the playlist is already sorted
+                const currentTrackIds = tracks.map(track => track.track.id);
+                if (JSON.stringify(currentTrackIds) === JSON.stringify(sortedTrackIds)) {
+                    logMessage('Playlist is already sorted by BPM.');
+                    return;
+                }
+
+                await reorderPlaylist(playlistId, sortedTrackIds);
+                logMessage('Sorting complete.');
+            } catch (error) {
+                // Error is already logged, just stop.
+            }
+        }
+
+        // Event Listeners
+        window.onload = () => {
+            // Check for the access token when the page loads.  If it's there, we've been redirected back from Spotify.
+            if (getAccessTokenFromUrl()) {
+                // The access token is in the URL hash, and we've extracted it.
+                //  initializeApp() is called inside getAccessTokenFromUrl()
+            } else {
+                // The user needs to log in.  Set up the login button.
+                document.getElementById('login-button').addEventListener('click', login);
+            }
+
+            document.getElementById('sort-button').addEventListener('click', sortPlaylist);
+            document.getElementById('clear-button').addEventListener('click', () => {
+                LOG_ELEMENT.innerHTML = '<p class="text-sm">Log:</p>'; // Clear, but keep the "Log:" label
+            });
+        };
+    </script>
+</body>
+</html>
